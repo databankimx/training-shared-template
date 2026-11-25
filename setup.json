@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 2,
+  "name": "Working With <Tutorial name>",
+  "folder": "training-<repo-name>",
+  "repoUrl": "https://github.com/databankimx/training-<repo-name>.git",
+  "branch": "main",
+  "baseDirectory": "C:\\Development\\training",
+  "runTests": true,
+  "installs": {
+    "git": {
+      "install": true,
+      "winget": "Git.Git"
+    },
+    "powershell7": {
+      "install": true,
+      "pinned": "7",
+      "winget": "Microsoft.PowerShell"
+    },
+    "node": {
+      "install": false,
+      "pinned": "24",
+      "winget": "OpenJS.NodeJS.LTS"
+    },
+    "python": {
+      "install": false,
+      "pinned": "3.12",
+      "winget": "Python.Python.3.12",
+      "sideBySide": true
+    },
+    "dotnet": {
+      "install": false,
+      "pinned": "10",
+      "winget": "Microsoft.DotNet.SDK.10"
+    },
+    "jdk": {
+      "install": false,
+      "pinned": "25",
+      "winget": "EclipseAdoptium.Temurin.25.JDK"
+    },
+    "maven": {
+      "install": false,
+      "pinned": "3.10.0",
+      "root": "C:\\Tools",
+      "url": "https://repo1.maven.org/maven2/org/apache/maven/apache-maven/3.10.0/apache-maven-3.10.0-bin.zip"
+    },
+    "msys2": {
+      "install": false,
+      "pinned": "14",
+      "root": "C:\\msys64",
+      "packages": [
+        "mingw-w64-ucrt-x86_64-gcc",
+        "mingw-w64-ucrt-x86_64-cmake",
+        "mingw-w64-ucrt-x86_64-ninja",
+        "mingw-w64-ucrt-x86_64-gdb"
+      ]
+    },
+    "rust": {
+      "install": false,
+      "pinned": "1.85",
+      "winget": "Rustlang.Rustup"
+    },
+    "visualStudio": {
+      "install": false,
+      "pinned": "17",
+      "workloads": [
+        "Microsoft.VisualStudio.Workload.ManagedDesktop"
+      ]
+    },
+    "buildTools": {
+      "install": false
+    },
+    "vcRuntime": {
+      "install": false
+    },
+    "vscode": {
+      "install": true,
+      "pinned": "1",
+      "winget": "Microsoft.VisualStudioCode",
+      "extensions": []
+    }
+  },
+  "steps": [
+    {
+      "name": "Lesson runner packages",
+      "type": "npm",
+      "folder": "lesson-runner",
+      "command": "ci",
+      "requires": [ "node" ]
+    },
+    {
+      "name": "Repository Python environment",
+      "type": "python-venv",
+      "folder": ".",
+      "path": ".venv",
+      "requirements": "requirements.txt",
+      "enabled": false,
+      "requires": [ "python" ]
+    },
+    {
+      "name": "Lesson runner tests",
+      "type": "npm-run",
+      "folder": "lesson-runner",
+      "script": "test",
+      "runTests": true,
+      "requires": [ "node" ]
+    }
+  ],
+  "launch": {
+    "ide": "vscode",
+    "kind": "electron",
+    "folder": "lesson-runner"
+  }
+}
