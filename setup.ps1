@@ -22,8 +22,10 @@
     then runs the clone's setup.ps1 with the same base directory. load-tutorial.ps1 does the same thing.
 
     Step types: npm (command: ci or install), npm-run (script, for example test), python-venv (path, requirements),
-    command (folder, exe, args, optional check), copy (source, dest, backup), msbuild-restore (solution),
-    write-file (path, and content or contentFrom), dotnet-build (projects).
+    command (folder, exe, args, optional check, optional pathPrepend), copy (source, dest, backup),
+    msbuild-restore (solution), write-file (path, and content or contentFrom), dotnet-build (projects),
+    download (url, path, and optional extract "zip" with folder).
+    The launch section takes kind "electron" (the runner's Electron app in folder) or "exe" (a built program at file).
 
     Every step may set: name, type, folder, enabled, requires (install names), runTests, elevated.
     A step or install that needs an elevated PowerShell makes the script stop before anything is installed.
@@ -806,12 +808,47 @@ function Invoke-CommandStep($Step, [string]$Name) {
     $exe = Get-Prop $Step "exe" $null
     if (-not $exe) { throw "command step has no exe." }
     $cmdArgs = @(Get-Prop $Step "args" @())
-    $result = Invoke-Quiet $exe $cmdArgs $folder
+    # pathPrepend adds folders to PATH for this step only, such as MSYS2's ucrt64\bin for the compiler tools.
+    $prepend = @(Get-Prop $Step "pathPrepend" @())
+    $savedPath = $env:Path
+    try {
+        if ($prepend.Count -gt 0) { $env:Path = (($prepend -join ";") + ";" + $env:Path) }
+        $result = Invoke-Quiet $exe $cmdArgs $folder
+    } finally {
+        $env:Path = $savedPath
+    }
     if ($result.Code -ne 0) {
         Show-FailureTail $result
         throw "$exe exited with code $($result.Code)."
     }
     Set-Outcome $Name "ok" $exe
+}
+
+# Downloads a file. With extract "zip", the zip is unpacked into folder and the download is removed. Skipped when the
+# file (or folder, for extract) is already there.
+function Invoke-DownloadStep($Step, [string]$Name) {
+    $url = Get-Prop $Step "url" $null
+    $dest = Get-RepoPath (Get-Prop $Step "path" $null)
+    $extract = Get-Prop $Step "extract" $null
+    $target = $dest
+    if ($extract) { $target = Get-RepoPath (Get-Prop $Step "folder" $null) }
+    if (Test-Path -LiteralPath $target) {
+        Set-Outcome $Name "ok" "already present: $target"
+        return
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Write-Host ("   Downloading " + $url)
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+    } catch {
+        throw "Download failed for $url. $($_.Exception.Message)"
+    }
+    if ($extract -eq "zip") {
+        Expand-Archive -LiteralPath $dest -DestinationPath $target -Force
+        Remove-Item -LiteralPath $dest -Force
+    }
+    Set-Outcome $Name "ok" $target
 }
 
 function Invoke-CopyStep($Step, [string]$Name) {
@@ -898,6 +935,7 @@ function Invoke-Step($Step) {
             "python-venv"     { Invoke-PythonVenvStep $Step $name }
             "command"         { Invoke-CommandStep $Step $name }
             "copy"            { Invoke-CopyStep $Step $name }
+            "download"        { Invoke-DownloadStep $Step $name }
             "msbuild-restore" { Invoke-MsBuildRestoreStep $Step $name }
             "write-file"      { Invoke-WriteFileStep $Step $name }
             "dotnet-build"    { Invoke-DotnetBuildStep $Step $name }
@@ -921,6 +959,18 @@ function Start-Runner($Launch) {
             (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
             (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd"))
         if ($code) { & $code $script:Root | Out-Null }
+    }
+    if ((Get-Prop $Launch "kind" "") -eq "exe") {
+        $file = Get-RepoPath (Get-Prop $Launch "file" $null)
+        $logDir = Split-Path -Parent $script:LogFile
+        if (Test-Path -LiteralPath $file) {
+            Start-Process -FilePath $file -WorkingDirectory $folder `
+                -RedirectStandardOutput (Join-Path $logDir "lesson-runner-out.log") `
+                -RedirectStandardError (Join-Path $logDir "lesson-runner-err.log")
+            Write-LogOnly "Started $file."
+        } else {
+            Set-Outcome "lesson-runner" "warning" "$file isn't built yet, so the runner wasn't started."
+        }
     }
     if ((Get-Prop $Launch "kind" "") -eq "electron") {
         $exe = Join-Path $folder "node_modules\electron\dist\electron.exe"
@@ -999,10 +1049,10 @@ function Invoke-Bootstrap {
 # ---------------------------------------------------------------------------------------------------------------------
 
 $KnownInstalls = @("git", "powershell7", "node", "python", "dotnet", "jdk", "maven", "msys2", "rust", "visualStudio", "buildTools", "vcRuntime", "vscode")
-$KnownStepTypes = @("npm", "npm-run", "python-venv", "command", "copy", "msbuild-restore", "write-file", "dotnet-build")
+$KnownStepTypes = @("npm", "npm-run", "python-venv", "command", "copy", "msbuild-restore", "write-file", "dotnet-build", "download")
 $KnownRootSettings = @("schemaVersion", "name", "folder", "repoUrl", "branch", "baseDirectory", "runTests", "installs", "steps", "launch")
 $KnownInstallSettings = @("install", "pinned", "sideBySide", "orNewer", "winget", "override", "root", "url", "workloads", "packages", "extensions")
-$KnownStepSettings = @("name", "type", "folder", "enabled", "requires", "runTests", "command", "script", "path", "requirements", "exe", "args", "check", "source", "dest", "backup", "solution", "content", "contentFrom", "projects", "elevated")
+$KnownStepSettings = @("name", "type", "folder", "enabled", "requires", "runTests", "command", "script", "path", "requirements", "exe", "args", "check", "source", "dest", "backup", "solution", "content", "contentFrom", "projects", "elevated", "url", "extract", "pathPrepend")
 
 function Test-IsText($Value) { return ($Value -is [string]) }
 function Test-IsFlag($Value) { return ($Value -is [bool]) }
@@ -1022,6 +1072,7 @@ function Get-RequiredStepSettings([string]$Type) {
         "copy"            { return @("source", "dest") }
         "msbuild-restore" { return @("solution") }
         "write-file"      { return @("path") }
+        "download"        { return @("url", "path") }
         default           { return @() }
     }
 }
@@ -1193,7 +1244,10 @@ function Get-SchemaProblems($Config) {
             $ide = Get-Prop $launch "ide" "none"
             if (@("none", "vscode") -notcontains $ide) { [void]$problems.Add("launch.ide must be 'none' or 'vscode'.") }
             $kind = Get-Prop $launch "kind" "none"
-            if (@("none", "electron") -notcontains $kind) { [void]$problems.Add("launch.kind must be 'none' or 'electron'.") }
+            if (@("none", "electron", "exe") -notcontains $kind) { [void]$problems.Add("launch.kind must be 'none', 'electron', or 'exe'.") }
+            if ($kind -eq "exe" -and -not (Test-IsText (Get-Prop $launch "file" $null))) {
+                [void]$problems.Add("launch.kind 'exe' needs 'file', the built program's path in the repository.")
+            }
         }
     }
     return @($problems)
