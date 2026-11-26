@@ -440,6 +440,49 @@ function Confirm-BuildTools($Spec) {
     }
 }
 
+# Loads the C++ compiler environment (vcvars64.bat) into this session, so native modules can be compiled.
+function Import-BuildToolsEnvironment {
+    $vswhere = Get-VsWhere
+    if (-not $vswhere) { return $false }
+    $install = (& $vswhere -products * -requires "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" -latest -property installationPath 2>$null | Select-Object -First 1)
+    if (-not $install) { return $false }
+    $vcvars = Join-Path $install "VC\Auxiliary\Build\vcvars64.bat"
+    if (-not (Test-Path -LiteralPath $vcvars)) { return $false }
+    $lines = cmd /c "`"$vcvars`" >nul 2>&1 && set"
+    foreach ($line in $lines) {
+        if ($line -match "^([^=]+)=(.*)$") { Set-Item -Path "env:$($Matches[1])" -Value $Matches[2] }
+    }
+    return $true
+}
+
+# Electron's fallback. When Electron's binary won't download, the C++ Build Tools are installed if they're missing,
+# the compiler environment is loaded, native modules are rebuilt, and Electron's installer runs again.
+# Returns $true when the binary is in place afterwards.
+function Invoke-ElectronBuildToolsFallback([string]$Folder, [string]$Npm, [string]$Electron) {
+    Write-Host "      Falling back to the C++ Build Tools for Electron." -ForegroundColor DarkGray
+    try {
+        if (-not (Test-VsWorkload "Microsoft.VisualStudio.Component.VC.Tools.x86.x64")) {
+            if (-not (Test-Administrator)) {
+                Write-Host "      The C++ Build Tools are needed for this fallback, and installing them needs an elevated PowerShell. Run this script as Administrator to try again." -ForegroundColor Yellow
+                return $false
+            }
+            Write-Host "      Installing the C++ Build Tools. This is a large download and can take a long time." -ForegroundColor DarkGray
+            Confirm-BuildTools $null
+        }
+        if (-not (Import-BuildToolsEnvironment)) {
+            Write-LogOnly "The C++ compiler environment couldn't be loaded, so the Electron rebuild was skipped."
+            return $false
+        }
+        $null = Invoke-Streamed $Npm @("rebuild") $Folder
+        $node = Find-Exe "node" @("$env:ProgramFiles\nodejs\node.exe")
+        if ($node) { $null = Invoke-Streamed $node @("install.js") $Electron }
+    } catch {
+        Write-LogOnly ("Electron fallback failed: " + $_.Exception.Message)
+        return $false
+    }
+    return (Test-Path -LiteralPath (Join-Path $Electron "dist\electron.exe"))
+}
+
 function Confirm-VcRuntime($Spec) {
     $system = [Environment]::GetFolderPath("System")
     $present = (Test-Path -LiteralPath (Join-Path $system "VCRUNTIME140.dll")) -and (Test-Path -LiteralPath (Join-Path $system "MSVCP140.dll"))
@@ -802,6 +845,9 @@ function Invoke-NpmStep($Step, [string]$Name) {
             }
         }
         if (-not (Test-Path -LiteralPath $electronExe)) {
+            $null = Invoke-ElectronBuildToolsFallback $folder $npm $electron
+        }
+        if (-not (Test-Path -LiteralPath $electronExe)) {
             if ($cause) {
                 Set-Outcome $Name "warning" "Electron's zip extractor didn't load: $cause. The full cause chain is above and in the log."
             } else {
@@ -1063,6 +1109,8 @@ function Start-Runner($Launch) {
     }
     if ((Get-Prop $Launch "kind" "") -eq "electron") {
         $exe = Join-Path $folder "node_modules\electron\dist\electron.exe"
+        # npm hoists node_modules to the workspace root when the runner is a workspace, so check the repository root too.
+        if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $script:Root "node_modules\electron\dist\electron.exe" }
         if (Test-Path -LiteralPath $exe) {
             # The runner's output goes to files. Without this, Electron writes its messages into this console and holds it.
             $logDir = Split-Path -Parent $script:LogFile
