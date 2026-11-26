@@ -938,7 +938,7 @@ function Invoke-MsBuildRestoreStep($Step, [string]$Name) {
     if (-not $vswhere) { throw "vswhere wasn't found, so MSBuild can't be located." }
     $msbuild = (& $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" 2>$null | Select-Object -First 1)
     if (-not $msbuild) { throw "MSBuild wasn't found in the Visual Studio installation." }
-    $result = Invoke-Quiet $msbuild @($solution, "/t:Restore", "/v:minimal", "/nologo")
+    $result = Invoke-Streamed $msbuild @($solution, "/t:Restore", "/v:minimal", "/nologo")
     if ($result.Code -ne 0) { Show-FailureTail $result; throw "MSBuild restore failed (exit $($result.Code))." }
     Set-Outcome $Name "ok" "restored $solution"
 }
@@ -970,7 +970,7 @@ function Invoke-DotnetBuildStep($Step, [string]$Name) {
     $failed = @()
     $projects = @(Get-Prop $Step "projects" @())
     foreach ($project in $projects) {
-        $result = Invoke-Quiet $dotnet @("build", (Join-Path $folder $project), "--nologo", "-v", "minimal")
+        $result = Invoke-Streamed $dotnet @("build", (Join-Path $folder $project), "--nologo", "-v", "minimal")
         if ($result.Code -ne 0) {
             Show-FailureTail $result
             $failed += $project
@@ -1028,6 +1028,16 @@ function Start-Runner($Launch) {
             (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
             (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd"))
         if ($code) { & $code $script:Root | Out-Null }
+    }
+    if ($ide -eq "visualstudio") {
+        # Opens the solution in Visual Studio, with the file association that Windows uses for .sln files.
+        $solution = Get-RepoPath (Get-Prop $Launch "solution" $null)
+        if (Test-Path -LiteralPath $solution) {
+            Start-Process -FilePath $solution
+            Write-LogOnly "Opened $solution in Visual Studio."
+        } else {
+            Set-Outcome "visual-studio" "warning" "$solution wasn't found, so Visual Studio wasn't opened."
+        }
     }
     if ((Get-Prop $Launch "kind" "") -eq "exe") {
         $file = Get-RepoPath (Get-Prop $Launch "file" $null)
@@ -1311,7 +1321,10 @@ function Get-SchemaProblems($Config) {
             [void]$problems.Add("'launch' must be an object.")
         } else {
             $ide = Get-Prop $launch "ide" "none"
-            if (@("none", "vscode") -notcontains $ide) { [void]$problems.Add("launch.ide must be 'none' or 'vscode'.") }
+            if (@("none", "vscode", "visualstudio") -notcontains $ide) { [void]$problems.Add("launch.ide must be 'none', 'vscode', or 'visualstudio'.") }
+            if ($ide -eq "visualstudio" -and -not (Test-IsText (Get-Prop $launch "solution" $null))) {
+                [void]$problems.Add("launch.ide 'visualstudio' needs 'solution', the .sln path in the repository.")
+            }
             $kind = Get-Prop $launch "kind" "none"
             if (@("none", "electron", "exe") -notcontains $kind) { [void]$problems.Add("launch.kind must be 'none', 'electron', or 'exe'.") }
             if ($kind -eq "exe" -and -not (Test-IsText (Get-Prop $launch "file" $null))) {
