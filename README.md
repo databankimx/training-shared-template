@@ -59,24 +59,69 @@ See the Development Rules of Engagement linked above for the full policy, includ
 
 ## Setup and requirements
 
-*Edit: list the tools a reader needs and any commands to run. Use PowerShell (`pwsh`) for every command block.*
+Every tutorial repository is set up the same way. The reader runs `setup.ps1` from the repository, or runs `load-tutorial.ps1`, which downloads the repository and then runs its `setup.ps1`. The script reads `setup.json` in the same folder and installs what that file lists.
 
-- Windows 10 or Windows 11
-- PowerShell 7 (`pwsh`)
+* Windows 10 or Windows 11
+* PowerShell 7 (`pwsh`), or Windows PowerShell 5.1. The script relaunches itself in PowerShell 7 once it's installed.
+
+Run from the repository folder:
+
+```pwsh
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+To put logs and any downloaded repositories in another folder, add `-BaseDirectory`:
+
+```pwsh
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -BaseDirectory <BASE_DIR>
+```
 
 ---
 
 ## Repository structure
 
-*Edit: show the top-level layout and a one-line description of each folder.*
-
 ```
-training-shared/
-|- .github/                      - Standard .github folder for training repositories
+training-shared-template/
+|- .github/            - Standard .github folder for training repositories
+|- load-tutorial.ps1   - Downloads a tutorial repository and runs its setup.ps1
+|- setup.ps1           - The universal setup script. Copy it unchanged into every tutorial repository
+|- setup.json          - Example settings for a new tutorial. Copy it, then edit it
 |- .gitignore
 |- LICENSE
 |- README.md
 ```
+
+---
+
+## Authoring a new tutorial
+
+`setup.ps1` is the same script in every tutorial repository. Only `setup.json` changes from one tutorial to the next, so don't edit the script for a single tutorial. If the script needs a change, make it here first, then copy it everywhere.
+
+1. Create the new tutorial repository.
+2. Copy `setup.ps1` and `setup.json` from this repository into its root. Copy `setup.ps1` unchanged.
+3. Edit `setup.json` for the tutorial. Keep `"schemaVersion": 2`.
+4. Test the setup on a clean computer or VM. Use a `dev` branch while you test, and set `"branch"` to `main` once the setup passes.
+5. Write `QUICKSTART.md`, with a "Quick setup with the script" section that lists what gets installed.
+
+### What setup.json controls
+
+| Key | What it does |
+|---|---|
+| `name`, `folder`, `repoUrl` | The tutorial's name, the folder it's cloned into, and its GitHub address. None of them can contain `<` or `>`. |
+| `branch` | The branch the setup uses. Set it to `main` for the released tutorial. |
+| `baseDirectory` | Where repositories and logs go. `-BaseDirectory` on the command line overrides it. |
+| `runTests` | `true` runs the course tests, which the reader can skip with `-SkipTests`. |
+| `installs` | What to install. Set `"install"` to `true` or `false`. Add `"pinned"` for a version, and `"extensions"` for VS Code. |
+| `steps` | Commands that run after the installs, in order. Each step can name the installs it `requires`. |
+| `launch` | What opens at the end. `ide` can be `none`, `vscode`, or `visualstudio`. `kind` can be `none`, `electron`, `exe`, or `command`. |
+
+### Step types
+
+`npm`, `npm-run`, `python-venv`, `command`, `copy`, `msbuild-restore`, `dotnet-build`, `write-file`, `download`, `verify-hashes`, and `check-variable`. A step that fails stops the runner from starting, so it's held back until the setup passes. A `check-variable` step only warns.
+
+### Keys the script doesn't know
+
+The script rejects any key it doesn't support, and tells you which one. Check the spelling after you add a setting.
 
 ---
 
@@ -105,6 +150,7 @@ This repository holds the pieces that DataBank IMX training repositories share. 
 | Date | Changes |
 |---|---|
 | 11/23/2026 | Initial version: license, README, `.gitignore`, and the standard `.github` folder |
+| 11/27/2026 | Universal `setup.ps1`, example `setup.json`, `load-tutorial.ps1`, and authoring notes |
 
 ---
 
